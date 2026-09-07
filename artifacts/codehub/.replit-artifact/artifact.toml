@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "CodeHub"
+description = "Адаптивное frontend-ядро облачной IDE для работы с проектами, файлами, кодом, Preview и Terminal на desktop и mobile."
+version = "1.0.0"
+id = "artifacts/codehub"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18091
+
+[services.development]
+run = "pnpm --filter @workspace/codehub run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/codehub", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/codehub/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18091"
+BASE_PATH = "/"
