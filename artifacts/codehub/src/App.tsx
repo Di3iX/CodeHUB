@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import CodeEditor from '@/components/CodeEditor';
 import Explorer from '@/components/Explorer';
+import TerminalPanel from '@/components/TerminalPanel';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import {
@@ -21,10 +22,15 @@ import {
   updateContentPaths,
   type FileNode,
 } from '@/lib/mock-file-system';
+import {
+  initialTerminalTranscript,
+  MockTerminalService,
+  type TerminalLine,
+  type TerminalService,
+} from '@/lib/terminal-service';
 import NotFound from '@/pages/not-found';
 import {
   Activity,
-  Archive,
   ArrowDownToLine,
   Bot,
   Code2,
@@ -42,7 +48,6 @@ import {
   Sparkles,
   Square,
   Terminal as TerminalIcon,
-  X,
   Zap,
 } from 'lucide-react';
 import {
@@ -65,9 +70,14 @@ function Home() {
   const [mobileView, setMobileView] = useState<MobileView>('code');
   const [isRunning, setIsRunning] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(true);
+  const [terminalHeight, setTerminalHeight] = useState(218);
+  const [terminalLines, setTerminalLines] = useState<TerminalLine[]>(initialTerminalTranscript);
+  const [terminalHistory, setTerminalHistory] = useState<string[]>([]);
   const [previewKey, setPreviewKey] = useState(0);
   const [commandOpen, setCommandOpen] = useState(false);
   const [notice, setNotice] = useState('Ready');
+  const terminalService = useRef<TerminalService>(new MockTerminalService());
+  const terminalLineId = useRef(0);
 
   const selectFile = (path: string) => {
     const node = findNode(fileSystem, path);
@@ -217,6 +227,66 @@ function Home() {
     setNotice(isRunning ? 'Process stopped' : 'Running project');
   };
 
+  const executeTerminalCommand = async (command: string) => {
+    const normalized = command.trim();
+    if (!normalized) return;
+
+    setTerminalHistory((current) => [...current, normalized]);
+    setTerminalLines((current) => [
+      ...current,
+      { id: `command-${terminalLineId.current++}`, kind: 'command', text: normalized },
+    ]);
+
+    try {
+      const result = await terminalService.current.execute(normalized);
+      if (result.clear) {
+        setTerminalLines([]);
+        setNotice('Terminal cleared');
+        return;
+      }
+
+      setTerminalLines((current) => [
+        ...current,
+        ...result.output.map((line) => ({
+          ...line,
+          id: `output-${terminalLineId.current++}`,
+        })),
+      ]);
+      setNotice(result.exitCode === 0 ? `Completed ${normalized}` : `Command failed: ${normalized}`);
+    } catch {
+      setTerminalLines((current) => [
+        ...current,
+        {
+          id: `error-${terminalLineId.current++}`,
+          kind: 'stderr',
+          text: 'Terminal service unavailable',
+        },
+      ]);
+      setNotice('Terminal service unavailable');
+    }
+  };
+
+  const clearTerminal = () => {
+    setTerminalLines([]);
+    setNotice('Terminal cleared');
+  };
+
+  const copyTerminal = () => {
+    const transcript = terminalLines.map((line) => (
+      line.kind === 'command' ? `$ ${line.text}` : line.text
+    )).join('\n');
+    void navigator.clipboard?.writeText(transcript);
+    setNotice('Terminal output copied');
+  };
+
+  const resizeTerminal = (height: number) => {
+    setTerminalHeight(height);
+    void terminalService.current.resize({
+      cols: 120,
+      rows: Math.max(4, Math.floor(height / 21)),
+    });
+  };
+
   return (
     <div className="codehub-shell min-h-[100dvh] text-[hsl(var(--foreground))]">
       <div className="scanline" />
@@ -293,7 +363,10 @@ function Home() {
           onDelete={deletePath}
         />
 
-        <section className="workspace-main grid min-w-0 overflow-hidden border-x border-[#252d40]">
+        <section
+          className="workspace-main grid min-w-0 overflow-hidden border-x border-[#252d40]"
+          style={{ gridTemplateRows: terminalOpen ? `minmax(0, 1fr) ${terminalHeight}px` : 'minmax(0, 1fr) 0px' }}
+        >
           <div className="min-h-0 overflow-hidden">
             {mobileView === 'files' ? (
               <div className="mobile-only h-full">
@@ -312,7 +385,16 @@ function Home() {
             ) : mobileView === 'preview' ? (
               <div className="mobile-only h-full"><PreviewPanel running={isRunning} previewKey={previewKey} onReload={() => { setPreviewKey((key) => key + 1); setNotice('Preview refreshed'); }} /></div>
             ) : mobileView === 'terminal' ? (
-              <div className="mobile-only h-full"><TerminalPanel isRunning={isRunning} onClear={() => setNotice('Terminal cleared')} /></div>
+              <div className="mobile-only h-full">
+                <TerminalPanel
+                  lines={terminalLines}
+                  history={terminalHistory}
+                  isRunning={isRunning}
+                  onExecute={executeTerminalCommand}
+                  onClear={clearTerminal}
+                  onCopy={copyTerminal}
+                />
+              </div>
             ) : mobileView === 'ai' ? (
               <AiPlaceholder />
             ) : (
@@ -331,7 +413,18 @@ function Home() {
             )}
           </div>
           {terminalOpen && mobileView === 'code' && (
-            <TerminalPanel isRunning={isRunning} onClear={() => setNotice('Terminal cleared')} desktop onClose={() => setTerminalOpen(false)} />
+            <TerminalPanel
+              lines={terminalLines}
+              history={terminalHistory}
+              isRunning={isRunning}
+              desktop
+              height={terminalHeight}
+              onExecute={executeTerminalCommand}
+              onClear={clearTerminal}
+              onCopy={copyTerminal}
+              onResize={resizeTerminal}
+              onClose={() => setTerminalOpen(false)}
+            />
           )}
         </section>
 
@@ -411,28 +504,6 @@ function GuildPreview() {
       </div>
       <div className="mt-8 flex items-center justify-between border-t border-[#cad3c7] pt-4 font-mono text-[9px] text-[#83908a]"><span>3 districts online</span><span>v0.4.2</span></div>
     </div>
-  );
-}
-
-function TerminalPanel({ isRunning, onClear, desktop = false, onClose }: { isRunning: boolean; onClear: () => void; desktop?: boolean; onClose?: () => void }) {
-  return (
-    <section className={`${desktop ? 'hidden md:flex' : 'mobile-only'} flex min-h-0 flex-col bg-[#0e1324]`}>
-      <div className="panel-header flex h-10 shrink-0 items-center justify-between border-b border-[#252d40] px-4">
-        <div className="flex items-center gap-2"><TerminalIcon size={14} className="text-[#56d2df]" /><span className="text-[10px] font-semibold uppercase tracking-[.16em] text-[#98a5b7]">Terminal</span><span className="rounded bg-[#202b3f] px-1.5 py-0.5 font-mono text-[8px] text-[#718096]">zsh</span></div>
-        <div className="flex items-center gap-1">
-          <button type="button" onClick={onClear} className="rounded p-1.5 text-[#6c7a90] hover:bg-white/[.06] hover:text-[#d9dfdc]" aria-label="Clear terminal" data-testid="button-clear-terminal"><Archive size={13} /></button>
-          {onClose && <button type="button" onClick={onClose} className="rounded p-1.5 text-[#6c7a90] hover:bg-white/[.06] hover:text-[#d9dfdc]" aria-label="Close terminal" data-testid="button-close-terminal"><X size={14} /></button>}
-        </div>
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto px-4 py-4 font-mono text-[11px] leading-[1.8]">
-        <div className="terminal-line"><span className="prompt">➜</span> the-guild-new-era <span className="text-[#617087]">git:(</span><span className="text-[#56d2df]">main</span><span className="text-[#617087]">)</span> npm run dev</div>
-        <div className="terminal-line mt-1"><span className="info">VITE</span> v6.1.0 ready in 142 ms</div>
-        <div className="terminal-line">➜  Local: <span className="info underline decoration-[#56d2df]/40 underline-offset-2">http://localhost:5173/</span></div>
-        <div className="terminal-line">➜  Network: use <span className="text-[#c5ced4]">--host</span> to expose</div>
-        <div className="terminal-line mt-3 border-t border-[#252d40]/70 pt-3"><span className={isRunning ? 'success' : 'text-[#718096]'}>{isRunning ? '✓' : '○'}</span> {isRunning ? 'Preview connected · waiting for changes' : 'Preview idle · press Run to start'}</div>
-        <div className="terminal-line mt-3"><span className="prompt">➜</span> <span className="text-[#cbd4d5]">_</span></div>
-      </div>
-    </section>
   );
 }
 

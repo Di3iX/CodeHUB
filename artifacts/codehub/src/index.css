@@ -170,6 +170,11 @@
 .terminal-line .prompt { color: hsl(var(--primary)); }
 .terminal-line .success { color: hsl(var(--primary)); }
 .terminal-line .info { color: hsl(var(--accent)); }
+.terminal-line.terminal-command { color: #d5dcd8; }
+.terminal-line.terminal-error { color: #ef8374; }
+.terminal-line.terminal-system { color: #91a0b5; }
+.terminal-resize-handle { background: rgba(14, 19, 36, .92); transition: background .16s ease; }
+.terminal-resize-handle:hover { background: rgba(86, 210, 223, .1); }
 .preview-frame {
   background: #eff1e8;
   color: #1e2733;
