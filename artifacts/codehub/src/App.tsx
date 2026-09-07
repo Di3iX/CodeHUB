@@ -1,8 +1,25 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
+import Explorer from '@/components/Explorer';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import {
+  countFiles,
+  findFirstFile,
+  findNode,
+  getFileKind,
+  getParentPath,
+  getNodePath,
+  initialContents,
+  initialFileSystem,
+  insertNode,
+  nodeExistsInParent,
+  removeNode,
+  renameNode,
+  updateContentPaths,
+  type FileNode,
+} from '@/lib/mock-file-system';
 import NotFound from '@/pages/not-found';
 import {
   Activity,
@@ -10,27 +27,18 @@ import {
   ArrowDownToLine,
   Bot,
   Braces,
-  ChevronDown,
-  ChevronRight,
-  CircleDot,
   Code2,
   Copy,
-  Download,
   FileCode2,
   FileJson2,
   FileText,
   Folder,
-  FolderOpen,
-  GitBranch,
   Globe2,
-  Layers3,
   Menu,
   Monitor,
-  MoreHorizontal,
   Play,
   RotateCw,
   Search,
-  Send,
   Settings2,
   Share2,
   Smartphone,
@@ -50,120 +58,7 @@ import {
 const queryClient = new QueryClient();
 
 type MobileView = 'files' | 'code' | 'preview' | 'terminal' | 'ai';
-type FileKind = 'tsx' | 'ts' | 'json' | 'md';
-
-type ProjectFile = {
-  path: string;
-  name: string;
-  kind: FileKind;
-  depth: number;
-  group?: boolean;
-};
-
-const projectFiles: ProjectFile[] = [
-  { path: 'src', name: 'src', kind: 'ts', depth: 0, group: true },
-  { path: 'src/App.tsx', name: 'App.tsx', kind: 'tsx', depth: 1 },
-  { path: 'src/main.tsx', name: 'main.tsx', kind: 'tsx', depth: 1 },
-  { path: 'src/game', name: 'game', kind: 'ts', depth: 1, group: true },
-  { path: 'src/game/CityScene.ts', name: 'CityScene.ts', kind: 'ts', depth: 2 },
-  { path: 'package.json', name: 'package.json', kind: 'json', depth: 0 },
-  { path: 'README.md', name: 'README.md', kind: 'md', depth: 0 },
-];
-
-const initialContents: Record<string, string> = {
-  'src/App.tsx': `import { CityScene } from "./game/CityScene";
-
-export function App() {
-  const scene = CityScene({ seed: "new-era" });
-
-  return (
-    <main className="guild-shell">
-      <header className="guild-header">
-        <span className="guild-kicker">THE GUILD</span>
-        <h1>New Era</h1>
-        <p>{scene.activeDistrict} is waking up.</p>
-      </header>
-
-      <section className="district-grid">
-        {scene.districts.map((district) => (
-          <article key={district.id}>
-            <span>{district.marker}</span>
-            <h2>{district.name}</h2>
-            <p>{district.signal}</p>
-          </article>
-        ))}
-      </section>
-    </main>
-  );
-}`,
-  'src/main.tsx': `import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
-import { App } from "./App";
-import "./styles.css";
-
-const root = document.getElementById("root");
-
-if (!root) {
-  throw new Error("Root element was not found");
-}
-
-createRoot(root).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);`,
-  'src/game/CityScene.ts': `type District = {
-  id: string;
-  name: string;
-  marker: string;
-  signal: string;
-};
-
-export function CityScene({ seed }: { seed: string }) {
-  const districts: District[] = [
-    { id: "01", name: "Lantern Row", marker: "01", signal: "quiet trade" },
-    { id: "02", name: "Signal Yard", marker: "02", signal: "open channel" },
-    { id: "03", name: "North Gate", marker: "03", signal: "first light" },
-  ];
-
-  return {
-    seed,
-    activeDistrict: "Lantern Row",
-    districts,
-  };
-}`,
-  'package.json': `{
-  "name": "the-guild-new-era",
-  "private": true,
-  "version": "0.4.2",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
-  }
-}`,
-  'README.md': `# The Guild: New Era
-
-A small city-builder prototype about the people who keep a
-neighborhood moving after dark.
-
-## Local development
-
-\`\`\`sh
-npm install
-npm run dev
-\`\`\`
-
-The first scene is intentionally quiet. Add a district, give it
-a signal, and let the city respond.`,
-};
-
-const kindIcon = (kind: FileKind, size = 15) => {
+const kindIcon = (kind: ReturnType<typeof getFileKind>, size = 15) => {
   if (kind === 'json') return <FileJson2 size={size} strokeWidth={1.7} />;
   if (kind === 'md') return <FileText size={size} strokeWidth={1.7} />;
   if (kind === 'tsx') return <FileCode2 size={size} strokeWidth={1.7} />;
@@ -171,6 +66,7 @@ const kindIcon = (kind: FileKind, size = 15) => {
 };
 
 function Home() {
+  const [fileSystem, setFileSystem] = useState<FileNode>(initialFileSystem);
   const [selectedPath, setSelectedPath] = useState('src/App.tsx');
   const [contents, setContents] = useState(initialContents);
   const [mobileView, setMobileView] = useState<MobileView>('code');
@@ -180,14 +76,104 @@ function Home() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [notice, setNotice] = useState('Ready');
 
-  const selectedFile = projectFiles.find((file) => file.path === selectedPath) ?? projectFiles[1];
+  const selectedFile = findNode(fileSystem, selectedPath)
+    ?? findNode(fileSystem, 'src/App.tsx')
+    ?? findFirstFile(fileSystem)
+    ?? { path: '', name: 'No file selected', type: 'file' as const, kind: 'ts' as const };
   const selectedContent = contents[selectedPath] ?? '';
   const lineCount = selectedContent.split('\n').length;
 
   const selectFile = (path: string) => {
+    const node = findNode(fileSystem, path);
+    if (!node || node.type !== 'file') return;
     setSelectedPath(path);
     setMobileView('code');
     setNotice(`Opened ${path}`);
+  };
+
+  const createFile = (parentPath: string, name: string) => {
+    const cleanName = name.trim();
+    const parent = findNode(fileSystem, parentPath);
+    if (!cleanName || cleanName.includes('/') || !parent || parent.type !== 'folder') {
+      setNotice('Choose a valid file name');
+      return false;
+    }
+    if (nodeExistsInParent(fileSystem, parentPath, cleanName)) {
+      setNotice(`${cleanName} already exists here`);
+      return false;
+    }
+
+    const path = getNodePath(parentPath, cleanName);
+    const kind = getFileKind(cleanName);
+    const starter = kind === 'json' ? '{}\n' : kind === 'md' ? `# ${cleanName.replace(/\.[^.]+$/, '')}\n` : '';
+    setFileSystem((current) => insertNode(current, parentPath, { path, name: cleanName, type: 'file', kind }));
+    setContents((current) => ({ ...current, [path]: starter }));
+    setSelectedPath(path);
+    setNotice(`Created ${path}`);
+    return true;
+  };
+
+  const createFolder = (parentPath: string, name: string) => {
+    const cleanName = name.trim();
+    const parent = findNode(fileSystem, parentPath);
+    if (!cleanName || cleanName.includes('/') || !parent || parent.type !== 'folder') {
+      setNotice('Choose a valid folder name');
+      return false;
+    }
+    if (nodeExistsInParent(fileSystem, parentPath, cleanName)) {
+      setNotice(`${cleanName} already exists here`);
+      return false;
+    }
+
+    const path = getNodePath(parentPath, cleanName);
+    setFileSystem((current) => insertNode(current, parentPath, {
+      path,
+      name: cleanName,
+      type: 'folder',
+      children: [],
+    }));
+    setNotice(`Created ${path}`);
+    return true;
+  };
+
+  const renamePath = (path: string, name: string) => {
+    const cleanName = name.trim();
+    const node = findNode(fileSystem, path);
+    const parentPath = getParentPath(path);
+    const parent = findNode(fileSystem, parentPath);
+    if (!cleanName || cleanName.includes('/') || !node || !parent || node.path === '' || nodeExistsInParent(fileSystem, parentPath, cleanName, path)) {
+      setNotice('Choose a unique name');
+      return false;
+    }
+
+    const nextPath = getNodePath(parentPath, cleanName);
+    setFileSystem((current) => renameNode(current, path, cleanName));
+    setContents((current) => updateContentPaths(current, path, nextPath));
+    if (selectedPath === path || selectedPath.startsWith(`${path}/`)) {
+      setSelectedPath(`${nextPath}${selectedPath.slice(path.length)}`);
+    }
+    setNotice(`Renamed to ${nextPath}`);
+    return true;
+  };
+
+  const deletePath = (path: string) => {
+    const node = findNode(fileSystem, path);
+    if (!node || path === '') return;
+
+    const nextFileSystem = removeNode(fileSystem, path);
+    setFileSystem(nextFileSystem);
+    setContents((current) => Object.fromEntries(
+      Object.entries(current).filter(([contentPath]) => (
+        contentPath !== path && !contentPath.startsWith(`${path}/`)
+      )),
+    ));
+
+    if (selectedPath === path || selectedPath.startsWith(`${path}/`)) {
+      const fallback = findNode(nextFileSystem, 'src/App.tsx') ?? findFirstFile(nextFileSystem);
+      setSelectedPath(fallback?.path ?? '');
+      setMobileView('code');
+    }
+    setNotice(`Deleted ${path}`);
   };
 
   const updateContent = (value: string) => {
@@ -266,12 +252,33 @@ function Home() {
       </header>
 
       <main className="workspace-grid grid h-[calc(100dvh-64px)] overflow-hidden">
-        <Explorer selectedPath={selectedPath} onSelect={selectFile} onNotice={setNotice} />
+        <Explorer
+          tree={fileSystem}
+          selectedPath={selectedPath}
+          fileCount={countFiles(fileSystem)}
+          onSelect={selectFile}
+          onCreateFile={createFile}
+          onCreateFolder={createFolder}
+          onRename={renamePath}
+          onDelete={deletePath}
+        />
 
         <section className="workspace-main grid min-w-0 overflow-hidden border-x border-[#252d40]">
           <div className="min-h-0 overflow-hidden">
             {mobileView === 'files' ? (
-              <div className="mobile-only h-full"><Explorer selectedPath={selectedPath} onSelect={selectFile} onNotice={setNotice} mobile /></div>
+              <div className="mobile-only h-full">
+                <Explorer
+                  tree={fileSystem}
+                  selectedPath={selectedPath}
+                  fileCount={countFiles(fileSystem)}
+                  onSelect={selectFile}
+                  onCreateFile={createFile}
+                  onCreateFolder={createFolder}
+                  onRename={renamePath}
+                  onDelete={deletePath}
+                  mobile
+                />
+              </div>
             ) : mobileView === 'preview' ? (
               <div className="mobile-only h-full"><PreviewPanel running={isRunning} previewKey={previewKey} onReload={() => { setPreviewKey((key) => key + 1); setNotice('Preview refreshed'); }} /></div>
             ) : mobileView === 'terminal' ? (
@@ -295,78 +302,12 @@ function Home() {
   );
 }
 
-function Explorer({ selectedPath, onSelect, onNotice, mobile = false }: { selectedPath: string; onSelect: (path: string) => void; onNotice: (message: string) => void; mobile?: boolean }) {
-  const [srcOpen, setSrcOpen] = useState(true);
-  const [gameOpen, setGameOpen] = useState(true);
-  const visibleFiles = useMemo(() => projectFiles.filter((file) => {
-    if (file.path.startsWith('src/game/') && !gameOpen) return false;
-    if (file.path.startsWith('src/') && file.path !== 'src' && !srcOpen) return false;
-    return true;
-  }), [gameOpen, srcOpen]);
-
-  return (
-    <aside className={`${mobile ? 'flex h-full w-full' : 'hidden md:flex'} min-w-0 flex-col bg-[#11162a]`}>
-      <div className="panel-header flex h-11 shrink-0 items-center justify-between border-b border-[#252d40] px-4">
-        <div className="flex items-center gap-2">
-          <Layers3 size={14} className="text-[#98a5b7]" />
-          <span className="text-[10px] font-semibold uppercase tracking-[.16em] text-[#98a5b7]">Explorer</span>
-        </div>
-        <div className="flex items-center gap-0.5">
-          <button type="button" onClick={() => onNotice('Search is available from the command menu')} className="rounded p-1.5 text-[#66738a] hover:bg-white/[.06] hover:text-[#d8dfda]" aria-label="Search files" data-testid="button-search-files"><Search size={14} /></button>
-          <button type="button" onClick={() => onNotice('More file actions are local-only')} className="rounded p-1.5 text-[#66738a] hover:bg-white/[.06] hover:text-[#d8dfda]" aria-label="More file actions" data-testid="button-more-file-actions"><MoreHorizontal size={14} /></button>
-        </div>
-      </div>
-      <div className="flex items-center justify-between border-b border-[#252d40]/70 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <FolderOpen size={15} className="text-[#c1e84f]" />
-          <span className="font-mono text-[11px] text-[#d1d8d4]">THE GUILD</span>
-        </div>
-        <span className="font-mono text-[9px] text-[#657289]">7 files</span>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto py-2">
-        {visibleFiles.map((file) => {
-          const isSelected = selectedPath === file.path;
-          const isSrc = file.path === 'src';
-          const isGame = file.path === 'src/game';
-          return (
-            <div key={file.path}>
-              <button
-                type="button"
-                onClick={() => file.group ? (isSrc ? setSrcOpen((value) => !value) : setGameOpen((value) => !value)) : onSelect(file.path)}
-                className={`file-row flex w-full items-center gap-2 py-[7px] pr-3 text-left ${isSelected ? 'selected' : 'text-[#9ba7b7]'}`}
-                style={{ paddingLeft: `${16 + file.depth * 17}px` }}
-                data-testid={`file-row-${file.path.replaceAll('/', '-')}`}
-              >
-                {file.group ? (file.path === 'src' ? (srcOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : (gameOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />)) : <span className="w-[13px]" />}
-                {file.group ? <Folder size={15} className={file.path === 'src' ? 'text-[#56d2df]' : 'text-[#7c90b2]'} /> : kindIcon(file.kind)}
-                <span className={`truncate font-mono text-[11px] ${isSelected ? 'font-medium' : ''}`}>{file.name}</span>
-                {file.path === 'src/App.tsx' && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#c1e84f]" />}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-      <div className="border-t border-[#252d40] px-4 py-3">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="font-mono text-[9px] uppercase tracking-[.15em] text-[#657289]">Source control</span>
-          <GitBranch size={13} className="text-[#657289]" />
-        </div>
-        <div className="flex items-center gap-2 text-[11px] text-[#9ba7b7]">
-          <CircleDot size={13} className="text-[#c1e84f]" />
-          <span>main</span>
-          <span className="ml-auto font-mono text-[10px] text-[#657289]">local</span>
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-function EditorPanel({ file, content, lineCount, onChange, notice }: { file: ProjectFile; content: string; lineCount: number; onChange: (value: string) => void; notice: string }) {
+function EditorPanel({ file, content, lineCount, onChange, notice }: { file: FileNode; content: string; lineCount: number; onChange: (value: string) => void; notice: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="panel-header flex h-11 shrink-0 items-center justify-between border-b border-[#252d40]">
         <div className="flex h-full items-center gap-2 border-r border-[#252d40] px-4">
-          <span className="text-[#c1e84f]">{kindIcon(file.kind, 14)}</span>
+          <span className="text-[#c1e84f]">{kindIcon(file.kind ?? getFileKind(file.name), 14)}</span>
           <span className="font-mono text-[11px] text-[#d5dcd8]">{file.name}</span>
           <span className="ml-1 h-1.5 w-1.5 rounded-full bg-[#c1e84f]" title="Unsaved local changes" />
         </div>
@@ -390,7 +331,7 @@ function EditorPanel({ file, content, lineCount, onChange, notice }: { file: Pro
         />
       </div>
       <div className="flex h-7 shrink-0 items-center justify-between border-t border-[#252d40] bg-[#10152a] px-4 font-mono text-[9px] text-[#647187]">
-        <div className="flex gap-4"><span>UTF-8</span><span>LF</span><span>{file.kind === 'md' ? 'Markdown' : file.kind === 'json' ? 'JSON' : 'TypeScript JSX'}</span></div>
+        <div className="flex gap-4"><span>UTF-8</span><span>LF</span><span>{(file.kind ?? getFileKind(file.name)) === 'md' ? 'Markdown' : (file.kind ?? getFileKind(file.name)) === 'json' ? 'JSON' : 'TypeScript JSX'}</span></div>
         <span>Ln 1, Col 1</span>
       </div>
     </div>
