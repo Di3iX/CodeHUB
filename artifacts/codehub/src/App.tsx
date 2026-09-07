@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import CodeEditor from '@/components/CodeEditor';
 import Explorer from '@/components/Explorer';
 import TerminalPanel from '@/components/TerminalPanel';
+import PreviewPanel from '@/components/PreviewPanel';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import {
@@ -28,10 +29,13 @@ import {
   type TerminalLine,
   type TerminalService,
 } from '@/lib/terminal-service';
+import {
+  MockRuntimeManager,
+  type RuntimeManager,
+  type RuntimeSnapshot,
+} from '@/lib/runtime-manager';
 import NotFound from '@/pages/not-found';
 import {
-  Activity,
-  ArrowDownToLine,
   Bot,
   Code2,
   FileCode2,
@@ -48,7 +52,6 @@ import {
   Sparkles,
   Square,
   Terminal as TerminalIcon,
-  Zap,
 } from 'lucide-react';
 import {
   Route,
@@ -68,7 +71,8 @@ function Home() {
   const [savedContents, setSavedContents] = useState(initialContents);
   const [openTabs, setOpenTabs] = useState(['src/App.tsx']);
   const [mobileView, setMobileView] = useState<MobileView>('code');
-  const [isRunning, setIsRunning] = useState(false);
+  const runtimeManager = useRef<RuntimeManager>(new MockRuntimeManager());
+  const [runtime, setRuntime] = useState<RuntimeSnapshot>(() => runtimeManager.current.getSnapshot());
   const [terminalOpen, setTerminalOpen] = useState(true);
   const [terminalHeight, setTerminalHeight] = useState(218);
   const [terminalLines, setTerminalLines] = useState<TerminalLine[]>(initialTerminalTranscript);
@@ -78,6 +82,29 @@ function Home() {
   const [notice, setNotice] = useState('Ready');
   const terminalService = useRef<TerminalService>(new MockTerminalService());
   const terminalLineId = useRef(0);
+
+  useEffect(() => runtimeManager.current.subscribe((event) => {
+    if (event.type === 'snapshot') {
+      setRuntime(event.snapshot);
+      setNotice(event.snapshot.status === 'STARTING'
+        ? 'Starting runtime'
+        : event.snapshot.status === 'RUNNING'
+          ? 'Runtime running'
+          : event.snapshot.status === 'ERROR'
+            ? 'Runtime error'
+            : 'Runtime stopped');
+      return;
+    }
+
+    setTerminalLines((current) => [
+      ...current,
+      {
+        id: `runtime-${terminalLineId.current++}`,
+        kind: event.log.level === 'error' ? 'stderr' : 'system',
+        text: event.log.text,
+      },
+    ]);
+  }), []);
 
   const selectFile = (path: string) => {
     const node = findNode(fileSystem, path);
@@ -222,9 +249,33 @@ function Home() {
   };
 
   const runProject = () => {
-    setIsRunning((current) => !current);
     setTerminalOpen(true);
-    setNotice(isRunning ? 'Process stopped' : 'Running project');
+    void runtimeManager.current.start().catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : 'Runtime failed to start';
+      setRuntime({ status: 'ERROR', error: message });
+      setNotice('Runtime error');
+      setTerminalLines((current) => [
+        ...current,
+        { id: `runtime-error-${terminalLineId.current++}`, kind: 'stderr', text: message },
+      ]);
+    });
+  };
+
+  const stopProject = () => {
+    void runtimeManager.current.stop();
+  };
+
+  const restartProject = () => {
+    setTerminalOpen(true);
+    void runtimeManager.current.restart().catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : 'Runtime failed to restart';
+      setRuntime({ status: 'ERROR', error: message });
+      setNotice('Runtime error');
+      setTerminalLines((current) => [
+        ...current,
+        { id: `runtime-error-${terminalLineId.current++}`, kind: 'stderr', text: message },
+      ]);
+    });
   };
 
   const executeTerminalCommand = async (command: string) => {
@@ -287,6 +338,15 @@ function Home() {
     });
   };
 
+  const refreshPreview = () => {
+    if (runtime.status !== 'RUNNING') {
+      setNotice('Start the runtime before refreshing Preview');
+      return;
+    }
+    setPreviewKey((key) => key + 1);
+    setNotice('Preview refreshed');
+  };
+
   return (
     <div className="codehub-shell min-h-[100dvh] text-[hsl(var(--foreground))]">
       <div className="scanline" />
@@ -329,10 +389,21 @@ function Home() {
             <Search size={14} />
             <span className="font-mono text-[10px]">⌘ K</span>
           </button>
-          <button type="button" onClick={() => { setIsRunning(false); setNotice('Process stopped'); }} className="flex items-center gap-1.5 rounded-md border border-[#c1e84f]/35 bg-[#c1e84f] px-3 py-2 text-[11px] font-semibold text-[#131925] transition-transform hover:brightness-105 active:scale-[.98]" data-testid="button-run-project">
-            {isRunning ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
-            <span className="hidden sm:inline">{isRunning ? 'Stop' : 'Run'}</span>
-          </button>
+          <div className="flex items-center gap-1 rounded-md border border-[#2a3347] bg-[#13192c] p-1">
+            <button type="button" onClick={runProject} disabled={runtime.status === 'STARTING' || runtime.status === 'RUNNING'} className="flex items-center gap-1.5 rounded px-2 py-1.5 text-[11px] font-semibold text-[#c1e84f] hover:bg-[#c1e84f]/10 disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-run-project">
+              <Play size={13} fill="currentColor" />
+              <span className="hidden sm:inline">Run</span>
+            </button>
+            <button type="button" onClick={stopProject} disabled={runtime.status === 'STOPPED'} className="flex items-center gap-1.5 rounded px-2 py-1.5 text-[11px] text-[#ef8374] hover:bg-[#ef8374]/10 disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-stop-project">
+              <Square size={12} fill="currentColor" />
+              <span className="hidden sm:inline">Stop</span>
+            </button>
+            <button type="button" onClick={restartProject} disabled={runtime.status === 'STARTING'} className="flex items-center gap-1.5 rounded px-2 py-1.5 text-[11px] text-[#56d2df] hover:bg-[#56d2df]/10 disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-restart-project">
+              <RotateCw size={13} />
+              <span className="hidden sm:inline">Restart</span>
+            </button>
+          </div>
+          <span className={`hidden rounded-full px-1.5 py-1 font-mono text-[8px] uppercase tracking-[.12em] sm:inline ${runtime.status === 'RUNNING' ? 'bg-[#c1e84f]/15 text-[#c1e84f]' : runtime.status === 'STARTING' ? 'bg-[#56d2df]/15 text-[#56d2df]' : runtime.status === 'ERROR' ? 'bg-[#ef8374]/15 text-[#ef8374]' : 'bg-[#252d40] text-[#68768c]'}`} data-testid="runtime-status">{runtime.status}</span>
           <button type="button" onClick={() => { setNotice('Project link copied'); void navigator.clipboard?.writeText('codehub.local/the-guild-new-era'); }} className="rounded-md border border-[#2a3347] bg-[#13192c] p-2 text-[#8e9bae] hover:border-[#44516a] hover:text-[#d7ddd9]" aria-label="Share project" data-testid="button-share-project">
             <Share2 size={15} />
           </button>
@@ -345,7 +416,7 @@ function Home() {
           <div className="absolute right-4 top-[58px] z-30 w-[270px] rounded-lg border border-[#354159] bg-[#151b30] p-2 shadow-2xl shadow-black/30">
             <p className="px-2 pb-2 pt-1 font-mono text-[9px] uppercase tracking-[.16em] text-[#6f7d92]">Quick actions</p>
             <button type="button" onClick={() => { selectFile('src/App.tsx'); setCommandOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-[#ccd4d6] hover:bg-white/[.06]" data-testid="button-command-open-app"><FileCode2 size={14} className="text-[#c1e84f]" /> Open App.tsx <span className="ml-auto text-[10px] text-[#68758a]">↵</span></button>
-            <button type="button" onClick={() => { runProject(); setCommandOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-[#ccd4d6] hover:bg-white/[.06]" data-testid="button-command-run"><Play size={14} className="text-[#c1e84f]" /> Run project <span className="ml-auto text-[10px] text-[#68758a]">⌘ R</span></button>
+             <button type="button" onClick={() => { runProject(); setCommandOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-[#ccd4d6] hover:bg-white/[.06]" data-testid="button-command-run"><Play size={14} className="text-[#c1e84f]" /> Run project <span className="ml-auto text-[10px] text-[#68758a]">⌘ R</span></button>
             <button type="button" onClick={() => { setMobileView('terminal'); setCommandOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-[#ccd4d6] hover:bg-white/[.06]" data-testid="button-command-terminal"><TerminalIcon size={14} className="text-[#56d2df]" /> Focus terminal</button>
           </div>
         )}
@@ -383,13 +454,13 @@ function Home() {
                 />
               </div>
             ) : mobileView === 'preview' ? (
-              <div className="mobile-only h-full"><PreviewPanel running={isRunning} previewKey={previewKey} onReload={() => { setPreviewKey((key) => key + 1); setNotice('Preview refreshed'); }} /></div>
+              <div className="mobile-only h-full"><PreviewPanel runtime={runtime} previewKey={previewKey} onReload={refreshPreview} mobile /></div>
             ) : mobileView === 'terminal' ? (
               <div className="mobile-only h-full">
                 <TerminalPanel
                   lines={terminalLines}
                   history={terminalHistory}
-                  isRunning={isRunning}
+                  isRunning={runtime.status === 'RUNNING'}
                   onExecute={executeTerminalCommand}
                   onClear={clearTerminal}
                   onCopy={copyTerminal}
@@ -416,7 +487,7 @@ function Home() {
             <TerminalPanel
               lines={terminalLines}
               history={terminalHistory}
-              isRunning={isRunning}
+              isRunning={runtime.status === 'RUNNING'}
               desktop
               height={terminalHeight}
               onExecute={executeTerminalCommand}
@@ -428,81 +499,10 @@ function Home() {
           )}
         </section>
 
-        <PreviewPanel running={isRunning} previewKey={previewKey} onReload={() => { setPreviewKey((key) => key + 1); setNotice('Preview refreshed'); }} />
+            <PreviewPanel runtime={runtime} previewKey={previewKey} onReload={refreshPreview} />
       </main>
 
       <MobileNav view={mobileView} onChange={setMobileView} />
-    </div>
-  );
-}
-
-function PreviewPanel({ running, previewKey, onReload }: { running: boolean; previewKey: number; onReload: () => void }) {
-  return (
-    <aside className="hidden min-w-0 flex-col bg-[#12182a] md:flex">
-      <div className="panel-header flex h-11 shrink-0 items-center justify-between border-b border-[#252d40] px-4">
-        <div className="flex items-center gap-2">
-          <Globe2 size={14} className="text-[#56d2df]" />
-          <span className="text-[10px] font-semibold uppercase tracking-[.16em] text-[#98a5b7]">Preview</span>
-          <span className={`rounded-full px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-[.12em] ${running ? 'bg-[#c1e84f]/15 text-[#c1e84f]' : 'bg-[#252d40] text-[#68768c]'}`}>{running ? 'live' : 'idle'}</span>
-        </div>
-        <button type="button" onClick={onReload} className="rounded p-1.5 text-[#718096] hover:bg-white/[.06] hover:text-[#d9dfdc]" aria-label="Refresh preview" data-testid="button-refresh-preview"><RotateCw size={14} /></button>
-      </div>
-      <div className="flex items-center gap-2 border-b border-[#252d40] px-3 py-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2 rounded border border-[#2d374c] bg-[#0e1324] px-2.5 py-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-[#c1e84f]" />
-          <span className="truncate font-mono text-[10px] text-[#7e8b9d]">localhost:5173</span>
-        </div>
-        <button type="button" onClick={() => setPreviewNotice()} className="rounded border border-[#2d374c] p-1.5 text-[#718096] hover:bg-white/[.06]" aria-label="Open preview in new window" data-testid="button-open-preview"><ArrowDownToLine size={13} /></button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto p-5">
-        <div key={previewKey} className="preview-window preview-frame min-h-[450px] overflow-hidden rounded-xl">
-          <div className="flex items-center justify-between border-b border-[#d3d8cd] bg-[#e5e9df] px-4 py-3">
-            <div className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#ef8374]" /><span className="h-2 w-2 rounded-full bg-[#e0bd5f]" /><span className="h-2 w-2 rounded-full bg-[#80bf79]" /></div>
-            <span className="font-mono text-[9px] uppercase tracking-[.18em] text-[#76827d]">guild.local</span>
-            <span className="w-10" />
-          </div>
-          <GuildPreview />
-        </div>
-      </div>
-      <div className="flex items-center gap-2 border-t border-[#252d40] px-4 py-3 text-[10px] text-[#738095]">
-        <Zap size={12} className={running ? 'text-[#c1e84f]' : 'text-[#536178]'} />
-        <span>{running ? 'HMR connected' : 'Start the project to connect'}</span>
-        <span className="ml-auto font-mono text-[9px]">1280 × 720</span>
-      </div>
-    </aside>
-  );
-}
-
-function setPreviewNotice() {
-  // Preview is intentionally local in this release; this keeps the control responsive without opening a new tab.
-}
-
-function GuildPreview() {
-  return (
-    <div className="px-7 py-8 sm:px-9 sm:py-10">
-      <div className="mb-10 flex items-start justify-between">
-        <div>
-          <p className="mb-3 font-mono text-[9px] font-medium uppercase tracking-[.25em] text-[#6c7b79]">The Guild</p>
-          <h2 className="font-sans text-4xl font-semibold tracking-[-.07em] text-[#263440]">New Era<span className="text-[#b0c94b]">.</span></h2>
-          <p className="mt-3 max-w-[210px] text-[11px] leading-relaxed text-[#65716f]">A city is a collection of signals. Someone has to listen.</p>
-        </div>
-        <div className="flex h-9 w-9 items-center justify-center rounded-full border border-[#aebdb0] bg-[#f1f3ea] text-[11px] font-semibold text-[#61736d]">NG</div>
-      </div>
-      <div className="grid grid-cols-2 gap-2.5">
-        <div className="col-span-2 rounded-lg bg-[#263440] p-4 text-[#e7eadf]">
-          <div className="mb-8 flex items-center justify-between"><span className="font-mono text-[9px] uppercase tracking-[.15em] text-[#abbcaf]">Active district</span><Activity size={14} className="text-[#b9d658]" /></div>
-          <p className="font-sans text-xl font-medium tracking-[-.04em]">Lantern Row</p>
-          <div className="mt-2 flex items-center gap-2 text-[10px] text-[#aebcb0]"><span className="h-1.5 w-1.5 rounded-full bg-[#bed85a]" /> Quiet trade · 04:18</div>
-        </div>
-        {['Signal Yard', 'North Gate'].map((name, index) => (
-          <div key={name} className="rounded-lg border border-[#cad3c7] bg-[#e7ebe0]/80 p-3.5">
-            <div className="mb-5 font-mono text-[9px] text-[#84918a]">0{index + 2}</div>
-            <div className="text-[11px] font-medium text-[#34463f]">{name}</div>
-            <div className="mt-1 text-[9px] text-[#7c8982]">{index ? 'first light' : 'open channel'}</div>
-          </div>
-        ))}
-      </div>
-      <div className="mt-8 flex items-center justify-between border-t border-[#cad3c7] pt-4 font-mono text-[9px] text-[#83908a]"><span>3 districts online</span><span>v0.4.2</span></div>
     </div>
   );
 }
