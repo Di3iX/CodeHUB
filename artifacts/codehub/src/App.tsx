@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
+import CodeEditor from '@/components/CodeEditor';
 import Explorer from '@/components/Explorer';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -26,12 +27,8 @@ import {
   Archive,
   ArrowDownToLine,
   Bot,
-  Braces,
   Code2,
-  Copy,
   FileCode2,
-  FileJson2,
-  FileText,
   Folder,
   Globe2,
   Menu,
@@ -58,17 +55,13 @@ import {
 const queryClient = new QueryClient();
 
 type MobileView = 'files' | 'code' | 'preview' | 'terminal' | 'ai';
-const kindIcon = (kind: ReturnType<typeof getFileKind>, size = 15) => {
-  if (kind === 'json') return <FileJson2 size={size} strokeWidth={1.7} />;
-  if (kind === 'md') return <FileText size={size} strokeWidth={1.7} />;
-  if (kind === 'tsx') return <FileCode2 size={size} strokeWidth={1.7} />;
-  return <Braces size={size} strokeWidth={1.7} />;
-};
 
 function Home() {
   const [fileSystem, setFileSystem] = useState<FileNode>(initialFileSystem);
   const [selectedPath, setSelectedPath] = useState('src/App.tsx');
   const [contents, setContents] = useState(initialContents);
+  const [savedContents, setSavedContents] = useState(initialContents);
+  const [openTabs, setOpenTabs] = useState(['src/App.tsx']);
   const [mobileView, setMobileView] = useState<MobileView>('code');
   const [isRunning, setIsRunning] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(true);
@@ -76,17 +69,11 @@ function Home() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [notice, setNotice] = useState('Ready');
 
-  const selectedFile = findNode(fileSystem, selectedPath)
-    ?? findNode(fileSystem, 'src/App.tsx')
-    ?? findFirstFile(fileSystem)
-    ?? { path: '', name: 'No file selected', type: 'file' as const, kind: 'ts' as const };
-  const selectedContent = contents[selectedPath] ?? '';
-  const lineCount = selectedContent.split('\n').length;
-
   const selectFile = (path: string) => {
     const node = findNode(fileSystem, path);
     if (!node || node.type !== 'file') return;
     setSelectedPath(path);
+    setOpenTabs((current) => current.includes(path) ? current : [...current, path]);
     setMobileView('code');
     setNotice(`Opened ${path}`);
   };
@@ -108,6 +95,8 @@ function Home() {
     const starter = kind === 'json' ? '{}\n' : kind === 'md' ? `# ${cleanName.replace(/\.[^.]+$/, '')}\n` : '';
     setFileSystem((current) => insertNode(current, parentPath, { path, name: cleanName, type: 'file', kind }));
     setContents((current) => ({ ...current, [path]: starter }));
+    setSavedContents((current) => ({ ...current, [path]: starter }));
+    setOpenTabs((current) => [...current, path]);
     setSelectedPath(path);
     setNotice(`Created ${path}`);
     return true;
@@ -149,6 +138,12 @@ function Home() {
     const nextPath = getNodePath(parentPath, cleanName);
     setFileSystem((current) => renameNode(current, path, cleanName));
     setContents((current) => updateContentPaths(current, path, nextPath));
+    setSavedContents((current) => updateContentPaths(current, path, nextPath));
+    setOpenTabs((current) => current.map((openPath) => (
+      openPath === path || openPath.startsWith(`${path}/`)
+        ? `${nextPath}${openPath.slice(path.length)}`
+        : openPath
+    )));
     if (selectedPath === path || selectedPath.startsWith(`${path}/`)) {
       setSelectedPath(`${nextPath}${selectedPath.slice(path.length)}`);
     }
@@ -167,18 +162,53 @@ function Home() {
         contentPath !== path && !contentPath.startsWith(`${path}/`)
       )),
     ));
+    setSavedContents((current) => Object.fromEntries(
+      Object.entries(current).filter(([contentPath]) => (
+        contentPath !== path && !contentPath.startsWith(`${path}/`)
+      )),
+    ));
+
+    const remainingTabs = openTabs.filter((openPath) => (
+      openPath !== path
+      && !openPath.startsWith(`${path}/`)
+      && Boolean(findNode(nextFileSystem, openPath))
+    ));
 
     if (selectedPath === path || selectedPath.startsWith(`${path}/`)) {
-      const fallback = findNode(nextFileSystem, 'src/App.tsx') ?? findFirstFile(nextFileSystem);
-      setSelectedPath(fallback?.path ?? '');
+      const fallback = remainingTabs[0]
+        ? findNode(nextFileSystem, remainingTabs[0])
+        : findNode(nextFileSystem, 'src/App.tsx') ?? findFirstFile(nextFileSystem);
+      const nextPath = fallback?.path ?? '';
+      setOpenTabs(nextPath && !remainingTabs.includes(nextPath) ? [...remainingTabs, nextPath] : remainingTabs);
+      setSelectedPath(nextPath);
       setMobileView('code');
+    } else {
+      setOpenTabs(remainingTabs);
     }
     setNotice(`Deleted ${path}`);
   };
 
-  const updateContent = (value: string) => {
-    setContents((current) => ({ ...current, [selectedPath]: value }));
+  const updateContent = (path: string, value: string) => {
+    setContents((current) => ({ ...current, [path]: value }));
     setNotice('Unsaved changes');
+  };
+
+  const saveFile = (path: string) => {
+    if (!path) return;
+    setSavedContents((current) => ({ ...current, [path]: contents[path] ?? '' }));
+    setNotice(`Saved ${path}`);
+  };
+
+  const closeTab = (path: string) => {
+    const tabIndex = openTabs.indexOf(path);
+    const remainingTabs = openTabs.filter((openPath) => openPath !== path);
+    setOpenTabs(remainingTabs);
+
+    if (selectedPath !== path) return;
+
+    const nextPath = remainingTabs[tabIndex] ?? remainingTabs[tabIndex - 1] ?? '';
+    setSelectedPath(nextPath);
+    setNotice(nextPath ? `Opened ${nextPath}` : 'No open files');
   };
 
   const runProject = () => {
@@ -286,7 +316,18 @@ function Home() {
             ) : mobileView === 'ai' ? (
               <AiPlaceholder />
             ) : (
-              <EditorPanel file={selectedFile} content={selectedContent} lineCount={lineCount} onChange={updateContent} notice={notice} />
+              <CodeEditor
+                tree={fileSystem}
+                openTabs={openTabs}
+                activePath={selectedPath}
+                contents={contents}
+                savedContents={savedContents}
+                notice={notice}
+                onSelectTab={selectFile}
+                onCloseTab={closeTab}
+                onChange={updateContent}
+                onSave={saveFile}
+              />
             )}
           </div>
           {terminalOpen && mobileView === 'code' && (
@@ -298,42 +339,6 @@ function Home() {
       </main>
 
       <MobileNav view={mobileView} onChange={setMobileView} />
-    </div>
-  );
-}
-
-function EditorPanel({ file, content, lineCount, onChange, notice }: { file: FileNode; content: string; lineCount: number; onChange: (value: string) => void; notice: string }) {
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="panel-header flex h-11 shrink-0 items-center justify-between border-b border-[#252d40]">
-        <div className="flex h-full items-center gap-2 border-r border-[#252d40] px-4">
-          <span className="text-[#c1e84f]">{kindIcon(file.kind ?? getFileKind(file.name), 14)}</span>
-          <span className="font-mono text-[11px] text-[#d5dcd8]">{file.name}</span>
-          <span className="ml-1 h-1.5 w-1.5 rounded-full bg-[#c1e84f]" title="Unsaved local changes" />
-        </div>
-        <div className="flex items-center gap-2 px-3">
-          <span className="hidden font-mono text-[9px] text-[#647187] sm:inline">{notice}</span>
-          <button type="button" onClick={() => void navigator.clipboard?.writeText(content)} className="rounded p-1.5 text-[#718096] hover:bg-white/[.06] hover:text-[#d9dfdc]" aria-label="Copy file contents" data-testid="button-copy-file"><Copy size={13} /></button>
-          <button type="button" onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))} className="rounded p-1.5 text-[#718096] hover:bg-white/[.06] hover:text-[#d9dfdc]" aria-label="Close file tab" data-testid="button-close-file"><X size={14} /></button>
-        </div>
-      </div>
-      <div className="editor-surface flex min-h-0 flex-1 overflow-hidden">
-        <div className="line-numbers w-12 shrink-0 select-none overflow-hidden pt-5 text-right font-mono text-[11px] leading-[1.75]">
-          {Array.from({ length: lineCount }, (_, index) => <div key={index}>{index + 1}</div>)}
-        </div>
-        <textarea
-          value={content}
-          onChange={(event) => onChange(event.target.value)}
-          spellCheck={false}
-          aria-label={`Editing ${file.path}`}
-          data-testid={`textarea-editor-${file.name}`}
-          className="editor-textarea min-h-full w-full overflow-auto py-5 pl-4 pr-5 font-mono text-[12px] leading-[1.75]"
-        />
-      </div>
-      <div className="flex h-7 shrink-0 items-center justify-between border-t border-[#252d40] bg-[#10152a] px-4 font-mono text-[9px] text-[#647187]">
-        <div className="flex gap-4"><span>UTF-8</span><span>LF</span><span>{(file.kind ?? getFileKind(file.name)) === 'md' ? 'Markdown' : (file.kind ?? getFileKind(file.name)) === 'json' ? 'JSON' : 'TypeScript JSX'}</span></div>
-        <span>Ln 1, Col 1</span>
-      </div>
     </div>
   );
 }

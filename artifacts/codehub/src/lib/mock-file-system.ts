@@ -1,4 +1,4 @@
-export type FileKind = 'tsx' | 'ts' | 'json' | 'md';
+export type FileKind = 'tsx' | 'ts' | 'jsx' | 'js' | 'json' | 'css' | 'html' | 'md';
 
 export type FileNode = {
   path: string;
@@ -141,7 +141,11 @@ a signal, and let the city respond.`,
 
 export function getFileKind(name: string): FileKind {
   if (name.endsWith('.tsx')) return 'tsx';
+  if (name.endsWith('.jsx')) return 'jsx';
+  if (name.endsWith('.js')) return 'js';
   if (name.endsWith('.json')) return 'json';
+  if (name.endsWith('.css')) return 'css';
+  if (name.endsWith('.html')) return 'html';
   if (name.endsWith('.md')) return 'md';
   return 'ts';
 }
