@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: github
+    description: GitHub repository operations
 paths:
   /healthz:
     get:
@@ -24,7 +26,128 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /github/account:
+    get:
+      operationId: githubAccount
+      tags: [github]
+      summary: Get connected GitHub account
+      responses:
+        "200":
+          description: Connected GitHub account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GithubAccount"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+  /github/repositories:
+    get:
+      operationId: listGithubRepositories
+      tags: [github]
+      summary: List repositories available to the connected account
+      responses:
+        "200":
+          description: GitHub repositories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GithubRepository"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+  /github/repositories/{owner}/{repo}/branches:
+    get:
+      operationId: listGithubBranches
+      tags: [github]
+      summary: List branches for a repository
+      parameters:
+        - $ref: "#/components/parameters/GithubOwner"
+        - $ref: "#/components/parameters/GithubRepo"
+      responses:
+        "200":
+          description: GitHub branches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GithubBranch"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+  /github/repositories/{owner}/{repo}/files:
+    get:
+      operationId: getGithubFiles
+      tags: [github]
+      summary: Read a repository branch into a workspace snapshot
+      parameters:
+        - $ref: "#/components/parameters/GithubOwner"
+        - $ref: "#/components/parameters/GithubRepo"
+        - name: branch
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Repository files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GithubFile"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+  /github/repositories/{owner}/{repo}/commit:
+    post:
+      operationId: commitGithubChanges
+      tags: [github]
+      summary: Commit and push workspace changes to a branch
+      parameters:
+        - $ref: "#/components/parameters/GithubOwner"
+        - $ref: "#/components/parameters/GithubRepo"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GithubCommitRequest"
+      responses:
+        "200":
+          description: Created GitHub commit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GithubCommitResult"
+        "400":
+          description: Invalid commit request
+        "502":
+          $ref: "#/components/responses/UpstreamError"
 components:
+  parameters:
+    GithubOwner:
+      name: owner
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    GithubRepo:
+      name: repo
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  responses:
+    UpstreamError:
+      description: GitHub API error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +156,137 @@ components:
           type: string
       required:
         - status
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+    GithubAccount:
+      type: object
+      properties:
+        login:
+          type: string
+        name:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+        htmlUrl:
+          type: string
+      required:
+        - login
+        - name
+        - avatarUrl
+        - htmlUrl
+    GithubRepository:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        fullName:
+          type: string
+        ownerLogin:
+          type: string
+        description:
+          type: string
+          nullable: true
+        defaultBranch:
+          type: string
+        private:
+          type: boolean
+        htmlUrl:
+          type: string
+        updatedAt:
+          type: string
+          nullable: true
+      required:
+        - id
+        - name
+        - fullName
+        - ownerLogin
+        - description
+        - defaultBranch
+        - private
+        - htmlUrl
+        - updatedAt
+    GithubBranch:
+      type: object
+      properties:
+        name:
+          type: string
+        sha:
+          type: string
+        protected:
+          type: boolean
+      required:
+        - name
+        - sha
+        - protected
+    GithubFile:
+      type: object
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        sha:
+          type: string
+      required:
+        - path
+        - content
+        - sha
+    GithubCommitChange:
+      type: object
+      properties:
+        path:
+          type: string
+        status:
+          type: string
+          enum: [added, modified, deleted]
+        content:
+          type: string
+          nullable: true
+        sha:
+          type: string
+          nullable: true
+      required:
+        - path
+        - status
+        - content
+        - sha
+    GithubCommitRequest:
+      type: object
+      properties:
+        branch:
+          type: string
+          minLength: 1
+        message:
+          type: string
+          minLength: 1
+        changes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/GithubCommitChange"
+      required:
+        - branch
+        - message
+        - changes
+    GithubCommitResult:
+      type: object
+      properties:
+        sha:
+          type: string
+        url:
+          type: string
+        message:
+          type: string
+      required:
+        - sha
+        - url
+        - message
 

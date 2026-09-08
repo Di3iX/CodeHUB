@@ -1,0 +1,1 @@
+- [GitHub connector behavior](github-connector.md) — use the current SDK registry version and throttle repository blob hydration to avoid secondary rate limits.

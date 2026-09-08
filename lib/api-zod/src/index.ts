@@ -1,2 +1,14 @@
 export * from "./generated/api";
-export * from "./generated/types";
+export type {
+  ApiError,
+  GithubAccount,
+  GithubBranch,
+  GithubCommitChange,
+  GithubCommitChangeStatus,
+  GithubCommitRequest,
+  GithubCommitResult,
+  GithubFile,
+  GithubRepository,
+  HealthStatus,
+  UpstreamErrorResponse,
+} from "./generated/types";

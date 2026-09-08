@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import CodeEditor from '@/components/CodeEditor';
 import Explorer from '@/components/Explorer';
+import GitHubPanel from '@/components/GitHubPanel';
 import TerminalPanel from '@/components/TerminalPanel';
 import PreviewPanel from '@/components/PreviewPanel';
 import { Toaster } from '@/components/ui/toaster';
@@ -23,6 +24,8 @@ import {
   updateContentPaths,
   type FileNode,
 } from '@/lib/mock-file-system';
+import { buildFileSystemFromGithubFiles } from '@/lib/github-file-system';
+import type { GithubFile, GithubRepository } from '@/services/github/types';
 import {
   initialTerminalTranscript,
   MockTerminalService,
@@ -40,6 +43,7 @@ import {
   Code2,
   FileCode2,
   Folder,
+  Github,
   Globe2,
   Menu,
   Monitor,
@@ -79,6 +83,7 @@ function Home() {
   const [terminalHistory, setTerminalHistory] = useState<string[]>([]);
   const [previewKey, setPreviewKey] = useState(0);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [githubOpen, setGithubOpen] = useState(false);
   const [notice, setNotice] = useState('Ready');
   const terminalService = useRef<TerminalService>(new MockTerminalService());
   const terminalLineId = useRef(0);
@@ -347,6 +352,24 @@ function Home() {
     setNotice('Preview refreshed');
   };
 
+  const openGithubWorkspace = (
+    files: GithubFile[],
+    repository: GithubRepository,
+    branch: string,
+  ) => {
+    const nextContents = Object.fromEntries(files.map((file) => [file.path, file.content]));
+    const nextFileSystem = buildFileSystemFromGithubFiles(files, repository.name);
+    const firstFile = findFirstFile(nextFileSystem);
+
+    setFileSystem(nextFileSystem);
+    setContents(nextContents);
+    setSavedContents(nextContents);
+    setOpenTabs(firstFile ? [firstFile.path] : []);
+    setSelectedPath(firstFile?.path ?? '');
+    setMobileView('code');
+    setNotice(`Loaded ${repository.fullName}@${branch}`);
+  };
+
   return (
     <div className="codehub-shell min-h-[100dvh] text-[hsl(var(--foreground))]">
       <div className="scanline" />
@@ -404,6 +427,9 @@ function Home() {
             </button>
           </div>
           <span className={`hidden rounded-full px-1.5 py-1 font-mono text-[8px] uppercase tracking-[.12em] sm:inline ${runtime.status === 'RUNNING' ? 'bg-[#c1e84f]/15 text-[#c1e84f]' : runtime.status === 'STARTING' ? 'bg-[#56d2df]/15 text-[#56d2df]' : runtime.status === 'ERROR' ? 'bg-[#ef8374]/15 text-[#ef8374]' : 'bg-[#252d40] text-[#68768c]'}`} data-testid="runtime-status">{runtime.status}</span>
+           <button type="button" onClick={() => setGithubOpen(true)} className={`rounded-md border p-2 hover:border-[#536d8c] hover:text-[#d7ddd9] ${githubOpen ? 'border-[#56d2df]/60 bg-[#56d2df]/10 text-[#56d2df]' : 'border-[#2a3347] bg-[#13192c] text-[#8e9bae]'}`} aria-label="Open GitHub" data-testid="button-open-github">
+             <Github size={15} />
+           </button>
           <button type="button" onClick={() => { setNotice('Project link copied'); void navigator.clipboard?.writeText('codehub.local/the-guild-new-era'); }} className="rounded-md border border-[#2a3347] bg-[#13192c] p-2 text-[#8e9bae] hover:border-[#44516a] hover:text-[#d7ddd9]" aria-label="Share project" data-testid="button-share-project">
             <Share2 size={15} />
           </button>
@@ -503,6 +529,13 @@ function Home() {
       </main>
 
       <MobileNav view={mobileView} onChange={setMobileView} />
+      {githubOpen && (
+        <GitHubPanel
+          currentContents={contents}
+          onClose={() => setGithubOpen(false)}
+          onOpenWorkspace={openGithubWorkspace}
+        />
+      )}
     </div>
   );
 }
