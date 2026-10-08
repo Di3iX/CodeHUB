@@ -8,6 +8,7 @@ export type {
   GithubCommitRequest,
   GithubCommitResult,
   GithubFile,
+  GithubOauthStatus,
   GithubRepository,
   HealthStatus,
   UpstreamErrorResponse,
