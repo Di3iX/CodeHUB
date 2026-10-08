@@ -26,6 +26,61 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /github/oauth/start:
+    get:
+      operationId: startGithubOauth
+      tags: [github]
+      summary: Redirects the browser to GitHub's OAuth consent screen
+      responses:
+        "302":
+          description: Redirect to GitHub
+  /github/oauth/callback:
+    get:
+      operationId: githubOauthCallback
+      tags: [github]
+      summary: OAuth redirect target; exchanges the code for a token and redirects back to the app
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect back to the frontend with a status flag (no token)
+  /github/oauth/status:
+    get:
+      operationId: githubOauthStatus
+      tags: [github]
+      summary: Whether this browser session has a connected GitHub account
+      responses:
+        "200":
+          description: Connection status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GithubOauthStatus"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+  /github/oauth/disconnect:
+    post:
+      operationId: disconnectGithub
+      tags: [github]
+      summary: Revokes and deletes the stored GitHub connection for this session
+      responses:
+        "200":
+          description: Disconnected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                required: [success]
   /github/account:
     get:
       operationId: githubAccount
@@ -38,6 +93,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GithubAccount"
+        "401":
+          $ref: "#/components/responses/NotConnected"
         "502":
           $ref: "#/components/responses/UpstreamError"
   /github/repositories:
@@ -54,6 +111,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/GithubRepository"
+        "401":
+          $ref: "#/components/responses/NotConnected"
         "502":
           $ref: "#/components/responses/UpstreamError"
   /github/repositories/{owner}/{repo}/branches:
@@ -73,6 +132,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/GithubBranch"
+        "401":
+          $ref: "#/components/responses/NotConnected"
         "502":
           $ref: "#/components/responses/UpstreamError"
   /github/repositories/{owner}/{repo}/files:
@@ -98,6 +159,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/GithubFile"
+        "401":
+          $ref: "#/components/responses/NotConnected"
         "502":
           $ref: "#/components/responses/UpstreamError"
   /github/repositories/{owner}/{repo}/commit:
@@ -123,6 +186,8 @@ paths:
                 $ref: "#/components/schemas/GithubCommitResult"
         "400":
           description: Invalid commit request
+        "401":
+          $ref: "#/components/responses/NotConnected"
         "502":
           $ref: "#/components/responses/UpstreamError"
 components:
@@ -144,6 +209,12 @@ components:
   responses:
     UpstreamError:
       description: GitHub API error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    NotConnected:
+      description: No GitHub account connected for this session
       content:
         application/json:
           schema:
@@ -180,6 +251,18 @@ components:
         - name
         - avatarUrl
         - htmlUrl
+    GithubOauthStatus:
+      type: object
+      properties:
+        connected:
+          type: boolean
+        account:
+          allOf:
+            - $ref: "#/components/schemas/GithubAccount"
+          nullable: true
+      required:
+        - connected
+        - account
     GithubRepository:
       type: object
       properties:
