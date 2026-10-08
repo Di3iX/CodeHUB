@@ -15,6 +15,7 @@ export * from './githubCommitChangeStatus';
 export * from './githubCommitRequest';
 export * from './githubCommitResult';
 export * from './githubFile';
+export * from './githubOauthStatus';
 export * from './githubRepository';
 export * from './healthStatus';
 export * from './upstreamErrorResponse';
