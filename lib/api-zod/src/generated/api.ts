@@ -29,6 +29,28 @@ export const GithubAccountResponse = zod.object({
 
 
 /**
+ * @summary Whether this browser session has a connected GitHub account
+ */
+export const GithubOauthStatusResponse = zod.object({
+  "connected": zod.boolean(),
+  "account": zod.object({
+  "login": zod.string(),
+  "name": zod.string().nullable(),
+  "avatarUrl": zod.string(),
+  "htmlUrl": zod.string()
+}).nullable()
+})
+
+
+/**
+ * @summary Revokes and deletes the stored GitHub connection for this session
+ */
+export const DisconnectGithubResponse = zod.object({
+  "success": zod.boolean()
+})
+
+
+/**
  * @summary List repositories available to the connected account
  */
 export const ListGithubRepositoriesResponseItem = zod.object({
